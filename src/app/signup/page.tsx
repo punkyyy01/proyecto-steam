@@ -1,9 +1,59 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+
+const RATE_LIMIT_FALLBACK_SECONDS = 300;
+
+type SupabaseAuthError = {
+  message: string;
+  status?: number;
+  code?: string;
+};
+
+function parseRetryAfterSeconds(message: string): number | null {
+  const minuteMatch = message.match(/(\d+)\s*(minute|minuto)s?/i);
+  if (minuteMatch) {
+    return Number(minuteMatch[1]) * 60;
+  }
+
+  const secondMatch = message.match(/(\d+)\s*(second|segundo)s?/i);
+  if (secondMatch) {
+    return Number(secondMatch[1]);
+  }
+
+  const plainNumberMatch = message.match(/(\d+)/);
+  if (plainNumberMatch) {
+    return Number(plainNumberMatch[1]);
+  }
+
+  return null;
+}
+
+function formatRemainingTime(seconds: number): string {
+  if (seconds >= 60) {
+    const minutes = Math.ceil(seconds / 60);
+    return `${minutes} minuto${minutes === 1 ? "" : "s"}`;
+  }
+
+  return `${seconds} segundo${seconds === 1 ? "" : "s"}`;
+}
+
+function isRateLimitError(error: SupabaseAuthError): boolean {
+  const message = error.message.toLowerCase();
+  const code = error.code?.toLowerCase() ?? "";
+
+  return (
+    error.status === 429 ||
+    code.includes("rate_limit") ||
+    code.includes("too_many_requests") ||
+    message.includes("rate limit") ||
+    message.includes("too many requests") ||
+    message.includes("security purposes")
+  );
+}
 
 export default function SignupPage() {
   const router = useRouter();
@@ -12,35 +62,106 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [confirmationSent, setConfirmationSent] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const cooldownUntilRef = useRef<number | null>(null);
+  const submissionLockRef = useRef(false);
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      const cooldownUntil = cooldownUntilRef.current;
+      if (!cooldownUntil) {
+        setCooldownSeconds(0);
+        window.clearInterval(intervalId);
+        return;
+      }
+
+      const remaining = Math.max(
+        0,
+        Math.ceil((cooldownUntil - Date.now()) / 1000)
+      );
+
+      setCooldownSeconds(remaining);
+
+      if (remaining === 0) {
+        cooldownUntilRef.current = null;
+        setError((currentError) => {
+          if (currentError?.startsWith("Demasiados intentos")) {
+            return null;
+          }
+          return currentError;
+        });
+        window.clearInterval(intervalId);
+      }
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [cooldownSeconds]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    if (submissionLockRef.current || loading) {
+      return;
+    }
+
+    if (cooldownSeconds > 0) {
+      setError(`Demasiados intentos. Vuelve a intentar en ${formatRemainingTime(cooldownSeconds)}.`);
+      return;
+    }
+
+    submissionLockRef.current = true;
     setLoading(true);
     setError(null);
 
-    const supabase = createClient();
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
 
-    if (error) {
-      if (error.message.includes("rate limit")) {
-        setError("Has alcanzado el límite de intentos. Por favor, espera 1 minuto antes de volver a intentarlo.");
-        setTimeout(() => setError(null), 60000); // Clear error after 1 minute
-      } else {
-        setError(error.message);
+      if (error) {
+        const authError = error as SupabaseAuthError;
+
+        if (isRateLimitError(authError)) {
+          const retryAfterSeconds =
+            parseRetryAfterSeconds(authError.message) ?? RATE_LIMIT_FALLBACK_SECONDS;
+          cooldownUntilRef.current = Date.now() + retryAfterSeconds * 1000;
+          setCooldownSeconds(retryAfterSeconds);
+          setError(
+            `Demasiados intentos. Vuelve a intentar en ${formatRemainingTime(retryAfterSeconds)}.`
+          );
+          return;
+        }
+
+        if (authError.message.toLowerCase().includes("already registered")) {
+          setError("Este email ya está registrado. Inicia sesión o restablece la contraseña.");
+          return;
+        }
+
+        setError(authError.message);
+        return;
       }
+
+      // If session exists, email confirmation is disabled → go straight to dashboard
+      if (data.session) {
+        router.push("/dashboard");
+        return;
+      }
+
+      // Otherwise, email confirmation is required
+      setConfirmationSent(true);
+    } finally {
+      submissionLockRef.current = false;
       setLoading(false);
-      return;
     }
-
-    // If session exists, email confirmation is disabled → go straight to dashboard
-    if (data.session) {
-      router.push("/dashboard");
-      return;
-    }
-
-    // Otherwise, email confirmation is required
-    setConfirmationSent(true);
-    setLoading(false);
   }
 
   if (confirmationSent) {
@@ -146,11 +267,15 @@ export default function SignupPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || cooldownSeconds > 0}
             className="w-full py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 text-white
               font-medium rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed"
           >
-            {loading ? "Creando cuenta..." : "Crear cuenta"}
+            {loading
+              ? "Creando cuenta..."
+              : cooldownSeconds > 0
+                ? `Reintentar en ${cooldownSeconds}s`
+                : "Crear cuenta"}
           </button>
         </form>
 
