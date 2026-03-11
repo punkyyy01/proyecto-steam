@@ -22,7 +22,12 @@ export default function SignupPage() {
     const { data, error } = await supabase.auth.signUp({ email, password });
 
     if (error) {
-      setError(error.message);
+      if (error.message.includes("rate limit")) {
+        setError("Has alcanzado el límite de intentos. Por favor, espera 1 minuto antes de volver a intentarlo.");
+        setTimeout(() => setError(null), 60000); // Clear error after 1 minute
+      } else {
+        setError(error.message);
+      }
       setLoading(false);
       return;
     }
