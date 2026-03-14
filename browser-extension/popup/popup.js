@@ -151,28 +151,37 @@ btnLogout.addEventListener("click", async () => {
 btnScan.addEventListener("click", async () => {
   hideMsg(scanMsg);
 
+  // 1. Obtener pestaña activa
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
     showMsg(scanMsg, "No se puede acceder a la pestaña actual.", true);
     return;
   }
 
+  // 2. Validar que estamos en Steam antes de intentar nada
+  if (!tab.url?.includes("steamcommunity.com")) {
+    setStatus("error", "Navega a la página de juegos de Steam primero.");
+    showMsg(scanMsg, "steamcommunity.com/id/TU_ID/games", true);
+    return;
+  }
+
   btnScan.disabled = true;
   setStatus("loading", "Escaneando historial de Steam…");
 
-  // Enviar START_SCAN al content_script
-  try {
-    await chrome.tabs.sendMessage(tab.id, { type: "START_SCAN" });
-  } catch {
-    // El content_script no está activo → usuario no está en la página correcta
-    setStatus("error", "Navega a la página de juegos de Steam primero.");
-    showMsg(
-      scanMsg,
-      "steamcommunity.com/id/TU_ID/games",
-      true
-    );
-    btnScan.disabled = false;
-  }
+  // 3. Enviar START_SCAN al content_script con callback para detectar errores
+  chrome.tabs.sendMessage(tab.id, { type: "START_SCAN" }, (response) => {
+    if (chrome.runtime.lastError) {
+      // El content_script no está inyectado → página incorrecta o no recargada
+      console.error("[Archaeologist]", chrome.runtime.lastError.message);
+      setStatus("error", "Recarga la página de Steam e inténtalo de nuevo.");
+      showMsg(scanMsg, "El content script no está activo. Recarga la pestaña de Steam.", true);
+      btnScan.disabled = false;
+      return;
+    }
+    // response = { ok: true } del content_script — la inyección fue exitosa,
+    // el resultado llegará vía SYNC_COMPLETE / SYNC_ERROR desde el background.
+    console.log("[Archaeologist] Inyección exitosa:", response);
+  });
 });
 
 // ── Mensajes del background ──────────────────────────────────────────────
