@@ -122,13 +122,18 @@ function setLoginBusy(busy) {
 async function init() {
   showSection("loading");
 
-  const state = await chrome.runtime.sendMessage({ type: "GET_AUTH_STATE" });
+  try {
+    const state = await chrome.runtime.sendMessage({ type: "GET_AUTH_STATE" });
 
-  if (state.isLoggedIn) {
-    userEmailEl.textContent = state.email ?? "";
-    showSection("main");
-    setStatus("idle", "Listo para escanear");
-  } else {
+    if (state?.isLoggedIn) {
+      userEmailEl.textContent = state.email ?? "";
+      showSection("main");
+      setStatus("idle", "Listo para escanear");
+    } else {
+      showSection("auth");
+    }
+  } catch (_) {
+    // El service worker aún no estaba activo — mostrar login como estado seguro
     showSection("auth");
   }
 }
