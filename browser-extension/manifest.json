@@ -36,8 +36,7 @@
     {
       "resources": ["injected.js"],
       "matches": [
-        "https://steamcommunity.com/id/*/games*",
-        "https://steamcommunity.com/profiles/*/games*"
+        "https://steamcommunity.com/*"
       ]
     }
   ],
