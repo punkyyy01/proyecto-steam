@@ -8,8 +8,8 @@
  */
 
 // ── Configuración Supabase (hardcoded — no exponer en UI) ─────────────────
-const SUPABASE_URL = "https://TU_PROYECTO.supabase.co";
-const SUPABASE_KEY = "TU_ANON_KEY";
+const SUPABASE_URL = "https://hncdsijnemjueviokxmw.supabase.co";
+const SUPABASE_KEY = "sb_publishable_bINfylePrhPffBnG-d-OgA_xYWTrtSN";
 
 // ── Referencias DOM ──────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
